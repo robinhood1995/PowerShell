@@ -1,0 +1,126 @@
+# Send files using WinSCP \ sFTP programically with PowerShell
+
+#region Logging
+#Log OutPut
+Function Write-Log {
+    [CmdletBinding()]
+    Param(
+    [Parameter(Mandatory=$False)]
+    [ValidateSet("INFO","WARN","ERROR","FATAL","DEBUG")]
+    [String]
+    $Level = "INFO",
+
+    [Parameter(Mandatory=$True)]
+    [string]
+    $Message,
+
+    [Parameter(Mandatory=$False)]
+    [string]
+    $logfile
+    )
+    
+    $Stamp = (Get-Date).toString("yyyy/MM/dd HH:mm:ss")
+    $Line = "$Stamp $Level $Message"
+    #If($logfile) {
+        Add-Content $logFile -Value $Line
+    #}
+    #Else {
+        Write-Output $Line
+    #}
+}
+#endregion
+
+#region Emailing
+Function emailIT(){
+#Notifications
+$toWhoSuccess = @("sling@atlascontainer.com")
+$toWhoFail = @("sling@atlascontainer.com")
+Send-MailMessage -To $toWhoSuccess -From "winscp@atlascontainer.com" -Subject "Error exporting to intranet" -SmtpServer "mail.atlascontainer.com" -Body "Log Directory $logDir" -Attachments "$logfile"
+}
+#endregion
+
+#region ftpIT
+Function ftpIT () {
+# Load the assembly and steup the session properties
+    try
+    {
+    # Load WinSCP .Net Assembly
+    Write-Log "INFO" "Loading .NET Assembly" $logFile
+    Add-Type -Path "C:\Program Files (x86)\WinSCP\WinSCPnet.dll"
+
+    # Setup the session options
+    Write-Log "INFO" "Loading session options" $logFile
+        $sessionOptions = New-Object WinSCP.SessionOptions
+        $sessionOptions.Protocol = [WinSCP.Protocol]::ftp
+        $sessionOptions.HostName = "myfflbook.io"
+        $sessionOptions.UserName = "webftp"
+        $sessionOptions.Password = "!webftp123!"
+        #$sessionOptions.SshPrivateKeyPath = ""
+        #$sessionOptions.SshPrivateKeyPassphrase = ""
+        #$sessionOptions.SshHostKeyFingerprint = "ssh-rsa 2048 fe:49:38:3e:c6:09:d7:95:f3:f3:23:d5:f9:71:3d:e4"
+        #$sessionOptions.GiveUpSecurityAndAcceptAnySshHostKey = $true
+    
+    Write-Log "INFO" "Creating the session" $logFile
+        $session = New-Object WinSCP.Session
+
+    try
+    {
+        #Connect
+    Write-Log "INFO" "Starting to connect" $logFile
+        $session.DebugLogPath = $WinSCPlogFile
+        $session.Open($sessionOptions)
+
+    #Write-Log "INFO" "Setting the session options to transfer" $logFile
+        #$transferOptions = New-Object WinSCP.TransfterOptions
+        #$transferOptions.TransferMode = [WinSCP.TransferMode]::Binary
+
+    Write-Log "INFO" "Getting the files to transfer" $logFile
+        foreach ($file in $filelist)
+        {
+            try {
+            $transferResults = $session.PutFiles("$sourceFolder\$file", "/files/", $False, $transferOptions)
+               foreach ($transfer in $transferResults.Transfers)
+                {
+                    Write-Log "INFO" "Upload of $($transfer.FileName) succeeded" $logFile
+                }
+            Move-Item -Path $sourceFolder\$file -Destination $archiveFolder\$file
+            }
+            catch
+            {
+                Write-Log "ERROR" "Upload of $($transfer.FileName) failed" $logFile
+                exit 1
+            }            
+        }
+    }
+
+    finally
+    {
+        # Disconnect, clean up
+        $session.Dispose()
+    }
+
+        exit 0
+    }
+    catch
+    {
+        Write-Log "ERROR" "Error: $($_.Exception.Message)" $logFile
+        exit 1
+    }
+}
+#endregion
+
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+# Global Variables
+$nowdat = (get-date).ToString("yyyyMMdd")
+$logDir = "C:\Kiwiplan\Scripts\Logs\"
+$logFile = "$logDir\mfbFTP_$nowdat.log"
+$WinSCPlogFile = "$logDir\WinSCP_$nowdat.log"
+$sourceFolder = "\\ACI-KDGA19\kiwiplan\Site\Interface\Outbound\mfb"
+$archiveFolder = "\\ACI-KDGA19\kiwiplan\Site\Interface\Outbound\mfb\Archive"
+$filelist = Get-ChildItem -Path $sourceFolder -File  | where {$_.LastAccessTime -lt (Get-Date).AddSeconds(-20)}
+
+Write-Log "INFO" "Starting to run" $logFile
+ftpIT
+Write-Log "INFO" "Completed the run " $logFile
+exit 1
